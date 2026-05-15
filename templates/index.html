@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NSE AI Analyst Dashboard</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .htmx-indicator { display: none; }
+        .htmx-request .htmx-indicator { display: inline-block; }
+        .htmx-request.htmx-indicator { display: inline-block; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased" x-data="dashboard()">
+    <!-- Navbar -->
+    <nav class="bg-white border-b border-slate-200 px-6 py-4 flex justify-between items-center sticky top-0 z-50">
+        <div class="flex items-center gap-2">
+            <span class="text-2xl">📊</span>
+            <h1 class="text-xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">NSE AI Analyst</h1>
+        </div>
+        <div class="flex items-center gap-4">
+            <span class="text-sm text-slate-500 flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                System Active
+            </span>
+            <button @click="refreshAll()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition shadow-sm flex items-center gap-2">
+                <span x-show="loading">⟳</span> Refresh All
+            </button>
+        </div>
+    </nav>
+
+    <div class="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-4 gap-6">
+        
+        <!-- Sidebar: Watchlist Management -->
+        <div class="lg:col-span-1 space-y-6">
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5">
+                <h2 class="text-lg font-semibold mb-4 flex items-center gap-2">
+                    <span>🔭</span> Watchlist
+                </h2>
+                
+                <!-- Add Symbol Form -->
+                <form @submit.prevent="addSymbol" class="flex gap-2 mb-6">
+                    <input type="text" x-model="newSymbol" placeholder="e.g. RELIANCE" 
+                           class="flex-1 px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none uppercase"
+                           required>
+                    <button type="submit" class="px-3 py-2 bg-slate-900 text-white rounded-lg hover:bg-slate-800 text-sm font-medium">
+                        +
+                    </button>
+                </form>
+
+                <!-- List -->
+                <div class="space-y-2 max-h-[600px] overflow-y-auto pr-1">
+                    <template x-for="stock in watchlist" :key="stock.symbol">
+                        <div class="group flex justify-between items-center p-3 rounded-lg border border-slate-100 hover:border-blue-200 hover:bg-blue-50 transition cursor-pointer"
+                             @click="analyzeStock(stock.symbol)">
+                            <div>
+                                <span class="font-bold text-slate-700" x-text="stock.symbol"></span>
+                                <div class="text-xs text-slate-400 mt-1" x-text="formatDate(stock.last_updated)"></div>
+                            </div>
+                            <button @click.stop="removeSymbol(stock.symbol)" class="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition">
+                                ✕
+                            </button>
+                        </div>
+                    </template>
+                    <div x-show="watchlist.length === 0" class="text-center text-slate-400 text-sm py-4">
+                        Watchlist is empty
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content: Analysis Grid -->
+        <div class="lg:col-span-3 space-y-6">
+            <template x-for="item in insights" :key="item.symbol">
+                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <!-- Card Header -->
+                    <div class="px-6 py-4 border-b border-slate-100 flex justify-between items-start bg-slate-50/50">
+                        <div>
+                            <div class="flex items-center gap-3">
+                                <h3 class="text-xl font-bold text-slate-800" x-text="item.symbol"></h3>
+                                <span class="px-2.5 py-0.5 rounded-full text-xs font-medium border"
+                                      :class="{
+                                          'bg-green-50 text-green-700 border-green-200': item.data.sentiment === 'Bullish',
+                                          'bg-red-50 text-red-700 border-red-200': item.data.sentiment === 'Bearish',
+                                          'bg-gray-50 text-gray-700 border-gray-200': item.data.sentiment === 'Neutral'
+                                      }"
+                                      x-text="item.data.sentiment || 'Neutral'">
+                                </span>
+                                <span class="text-xs text-slate-400" x-text="'Confidence: ' + (item.data.confidence_1_to_10 || 0) + '/10'"></span>
+                            </div>
+                            <p class="text-sm text-slate-500 mt-1" x-text="formatDate(item.fetched_at)"></p>
+                        </div>
+                        <button @click="analyzeStock(item.symbol)" class="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1">
+                            <span class="htmx-indicator">⟳</span> Update
+                        </button>
+                    </div>
+
+                    <!-- Card Body -->
+                    <div class="p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Summary -->
+                        <div class="md:col-span-2">
+                            <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Executive Summary</h4>
+                            <p class="text-slate-700 leading-relaxed" x-text="item.data.summary || 'No summary available.'"></p>
+                        </div>
+
+                        <!-- Catalysts -->
+                        <div>
+                            <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Key Catalysts</h4>
+                            <ul class="space-y-1.5">
+                                <template x-for="cat in (item.data.key_catalysts || [])">
+                                    <li class="flex items-start gap-2 text-sm text-slate-600">
+                                        <span class="text-green-500 mt-1">▹</span>
+                                        <span x-text="cat"></span>
+                                    </li>
+                                </template>
+                                <li x-show="(item.data.key_catalysts || []).length === 0" class="text-sm text-slate-400 italic">None identified</li>
+                            </ul>
+                        </div>
+
+                        <!-- Risks -->
+                        <div>
+                            <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Risks</h4>
+                            <ul class="space-y-1.5">
+                                <template x-for="risk in (item.data.risks || [])">
+                                    <li class="flex items-start gap-2 text-sm text-slate-600">
+                                        <span class="text-red-500 mt-1">▹</span>
+                                        <span x-text="risk"></span>
+                                    </li>
+                                </template>
+                                <li x-show="(item.data.risks || []).length === 0" class="text-sm text-slate-400 italic">None identified</li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+            </template>
+            
+            <div x-show="insights.length === 0" class="text-center py-20 bg-white rounded-xl border border-dashed border-slate-300">
+                <p class="text-slate-500">Add stocks to your watchlist to see AI analysis here.</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function dashboard() {
+            return {
+                newSymbol: '',
+                watchlist: [],
+                insights: [],
+                loading: false,
+
+                async init() {
+                    await this.fetchWatchlist();
+                    await this.fetchInsights();
+                    // Auto-refresh every 60s
+                    setInterval(() => {
+                        this.fetchWatchlist();
+                        this.fetchInsights();
+                    }, 60000);
+                },
+
+                async fetchWatchlist() {
+                    try {
+                        const res = await fetch('/api/watchlist');
+                        this.watchlist = await res.json();
+                    } catch (e) { console.error(e); }
+                },
+
+                async fetchInsights() {
+                    try {
+                        const res = await fetch('/api/insights');
+                        this.insights = await res.json();
+                    } catch (e) { console.error(e); }
+                },
+
+                async addSymbol() {
+                    if (!this.newSymbol) return;
+                    try {
+                        await fetch('/api/watchlist', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({ symbol: this.newSymbol.toUpperCase() })
+                        });
+                        this.newSymbol = '';
+                        await this.fetchWatchlist();
+                        await this.analyzeStock(this.watchlist[0]?.symbol || this.newSymbol); // Analyze immediately
+                    } catch (e) { alert('Failed to add symbol'); }
+                },
+
+                async removeSymbol(symbol) {
+                    if(!confirm(`Remove ${symbol}?`)) return;
+                    try {
+                        await fetch(`/api/watchlist/${symbol}`, { method: 'DELETE' });
+                        await this.fetchWatchlist();
+                        await this.fetchInsights();
+                    } catch (e) { alert('Failed to remove'); }
+                },
+
+                async analyzeStock(symbol) {
+                    this.loading = true;
+                    try {
+                        await fetch(`/api/analyze/${symbol}`);
+                        await this.fetchInsights();
+                        await this.fetchWatchlist();
+                    } catch (e) { alert('Analysis failed'); }
+                    finally { this.loading = false; }
+                },
+
+                refreshAll() {
+                    this.fetchWatchlist();
+                    this.fetchInsights();
+                },
+
+                formatDate(isoString) {
+                    if (!isoString) return 'Never';
+                    const d = new Date(isoString);
+                    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                }
+            }
+        }
+        document.addEventListener('alpine:init', () => {
+            dashboard().init();
+        });
+    </script>
+</body>
+</html>
